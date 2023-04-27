@@ -1,11 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
 
-#define DEFAULT_DIRECTORY "sfd"
-#define DEFAULT_SDF_FILENAME "datafile.sdf"
+#define DEFAULT_SDF_DIR		"sfd"
+#define DEFAULT_SDF_PATH	"datafile.sdf"
 
 #define OBFUSCATEA ((unsigned char) 97)
 #define OBFUSCATEB ((unsigned char) 11)
@@ -15,9 +17,41 @@
 enum ErrCode
 {
 	EC_NONE,
+	EC_NOACTION,
+	EC_NOFILE,
+	EC_NODIR,
+	EC_BADARGS,
 	EC_BADMAGIC,
-	EC_DIREXISTS,
-	EC_NODIR
+	EC_DIREXISTS
+};
+
+enum Action
+{
+	A_NONE,
+	A_HELP,
+	A_PACK,
+	A_UNPACK
+};
+
+enum Extension
+{
+	EXT_BAD,
+	EXT_TXT,
+	EXT_JPG,
+	EXT_OGG,
+	EXT_RGB,
+	EXT_RAW,
+	EXT_SRF,
+	EXT_MUS,
+	EXT_DAT,
+	EXT_SRC,
+	EXT_RUN,
+	EXT_PCX,
+	EXT_LAN,
+	EXT_DDD,
+	EXT_RDY,
+	EXT_TIL,
+	EXT_END
 };
 
 struct IndexEntry
@@ -31,12 +65,17 @@ struct IndexEntry
 	struct IndexEntry *next;
 };
 
-const char sdf_extension[16][4] = {
+const char sdf_extension[EXT_END][4] = {
 	"BAD", "TXT", "JPG", "OGG",
 	"RGB", "RAW", "SRF", "MUS",
 	"DAT", "SRC", "RUN", "PCX",
 	"LAN", "DDD", "RDY", "TIL"
 };
+
+char output_path[32] = "";
+char input_path[32] = "";
+enum Action action = A_NONE;
+bool flag_convert_eol = false;
 
 void help(void);
 int pack(void);
@@ -46,32 +85,97 @@ int main(int argc, char *argv[])
 {
 	printf("SoulFu data packer\n\n");
 
-	if (1 == argc)
+	for (int i = 1; i < argc; ++i)
 	{
-		printf("no arguments provided\n\n");
-		help();
-		return EC_NONE;
-	}
-	else if (2 == argc)
-	{
-		if (!strcmp(argv[1], "-p"))
+		if (!strcmp(argv[i], "-h"))
 		{
-			return pack();
+			action = A_HELP;
 		}
-		else if (!strcmp(argv[1], "-u"))
+		else if (!strcmp(argv[i], "-p"))
 		{
-			return unpack();
+			if (A_NONE == action)
+			{
+				action = A_PACK;
+				if (0 == input_path[0])
+					strcpy(input_path, DEFAULT_SDF_DIR);
+				if (0 == output_path[0])
+					strcpy(output_path, DEFAULT_SDF_PATH);
+			}
+			else
+			{
+				printf("Error: bad arguments.\n");
+				return EC_BADARGS;
+			}
+		}
+		else if (!strcmp(argv[i], "-u"))
+		{
+			if (A_NONE == action)
+			{
+				action = A_UNPACK;
+				if (0 == output_path[0])
+					strcpy(output_path, DEFAULT_SDF_DIR);
+				if (0 == input_path[0])
+					strcpy(input_path, DEFAULT_SDF_PATH);
+			}
+			else
+			{
+				printf("Error: bad arguments.\n");
+				return EC_BADARGS;
+			}
+		}
+		else if (!strcmp(argv[i], "-i"))
+		{
+			if ((i + 1) >= argc)
+			{
+				printf("Error: bad arguments.\n");
+				return EC_BADARGS;
+			}
+			strcpy(input_path, argv[++i]);
+		}
+		else if (!strcmp(argv[i], "-o"))
+		{
+			if ((i + 1) >= argc)
+			{
+				printf("Error: bad arguments.\n");
+				return EC_BADARGS;
+			}
+			strcpy(output_path, argv[++i]);
+		}
+		else if (!strcmp(argv[i], "-n"))
+		{
+			flag_convert_eol = true;
 		}
 	}
 
+	switch (action)
+	{
+		case A_HELP:
+			help();
+			return EC_NONE;
+		case A_PACK:
+			return pack();
+		case A_UNPACK:
+			return unpack();
+		case A_NONE:
+		default:
+			printf("Error: no action provided.\n");
+			printf("Type %s -h to get a quick help.\n", argv[0]);
+			return EC_NOACTION;
+	}
+
+	// never executed
 	return EC_NONE;
 }
 
 void help(void)
 {
 	static const char contents[] = "Quick help:\n"
-		"-p    packs sfd folder into datafile.sdf\n"
-		"-u    unpacks datafile.sdf to sfd folder\n";
+		"  -h           help\n"
+		"  -p           packs a directory into SDF\n"
+		"  -u           unpacks SDF to a directory\n"
+		"  -i <path>    specifies input path\n"
+		"  -o <path>    specifies output path\n"
+		"  -n           [src,txt] converts \\0 to LF and vice versa\n";
 	printf(contents);
 }
 
@@ -85,17 +189,19 @@ void write_big_endian(unsigned char dst[4], unsigned int n)
 
 unsigned char get_type_from_ext(char *ext)
 {
-	for (unsigned char i = 0; i < 16; ++i)
+	for (unsigned char i = EXT_BAD; i < EXT_END; ++i)
 	{
 		if (!strcmp(sdf_extension[i], ext))
 			return i;
 	}
-	return 0;	// 0 means unused file
+	return EXT_BAD;
 }
 
 int pack(void)
 {
-	DIR *dirp = opendir(DEFAULT_DIRECTORY);
+	printf("Input path: %s\nOutput path: %s\n", input_path, output_path);
+
+	DIR *dirp = opendir(input_path);
 	if (NULL == dirp)
 	{
 		printf("Error: data directory not found.\n");
@@ -115,7 +221,7 @@ int pack(void)
 			struct IndexEntry *curr = *ientry;
 			curr->next = NULL;
 			ientry = &curr->next;
-			sprintf(curr->path, "%s/%s", DEFAULT_DIRECTORY, entry->d_name);
+			sprintf(curr->path, "%s/%s", input_path, entry->d_name);
 			sscanf(entry->d_name, "%[^.\r\n].%s", curr->name, curr->ext);
 			curr->type = get_type_from_ext(curr->ext);
 			if (0 == curr->type)
@@ -128,7 +234,7 @@ int pack(void)
 	closedir(dirp);
 
 	FILE *output = NULL;
-	output = fopen("output.sdf", "wb");
+	output = fopen(output_path, "wb");
 
 	// file header
 	fwrite("----------------", 1, 16, output);
@@ -196,7 +302,13 @@ int pack(void)
 		for (int i = 0; i < (*ientry)->size; ++i)
 		{
 			fread(&data, 1, 1, input);
+
+			if (flag_convert_eol &&
+				((EXT_SRC == (*ientry)->type) || (EXT_TXT == (*ientry)->type)) &&
+				('\n' == data))
+				data = '\0';
 			data += OBFUSCATED;
+
 			fwrite(&data, 1, 1, output);
 		}
 		fclose(input);
@@ -209,8 +321,15 @@ int pack(void)
 
 int unpack(void)
 {
+	printf("Input path: %s\nOutput path: %s\n", input_path, output_path);
+
 	FILE *input = NULL;
-	input = fopen(DEFAULT_SDF_FILENAME, "rb");
+	input = fopen(input_path, "rb");
+	if (NULL == input)
+	{
+		printf("Error: SDF not found.\n");
+		return EC_NOFILE;
+	}
 
 	char magic[32];
 	fseek(input, 16, SEEK_SET);
@@ -232,9 +351,9 @@ int unpack(void)
 
 	int ret = 0;
 #ifdef __MINGW32__
-	ret = mkdir(DEFAULT_DIRECTORY);
+	ret = mkdir(output_path);
 #else
-	ret = mkdir(DEFAULT_DIRECTORY, 0644);
+	ret = mkdir(output_path, 0755);
 #endif
 	if (0 != ret)
 	{
@@ -272,11 +391,11 @@ int unpack(void)
 		int filetype = *(index + 4) & 15;
 		strcat(filename, ".");
 		strcat(filename, sdf_extension[filetype]);
-		printf("%s\n", filename);
+		//printf("%s\n", filename);
 
 		// save the file
 		unsigned char filepath[32];
-		sprintf(filepath, "%s/%s", DEFAULT_DIRECTORY, filename);
+		sprintf(filepath, "%s/%s", output_path, filename);
 		FILE *output = NULL;
 		output = fopen(filepath, "wb");
 
@@ -288,7 +407,13 @@ int unpack(void)
 		{
 			unsigned char data;
 			fread(&data, 1, 1, input);
+
 			data -= OBFUSCATED;
+			if (flag_convert_eol &&
+				((EXT_SRC == filetype) || (EXT_TXT == filetype)) &&
+				(0 == data))
+				data = '\n';
+
 			fwrite(&data, 1, 1, output);
 		}
 
