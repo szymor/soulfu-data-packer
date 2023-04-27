@@ -1,9 +1,11 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/types.h>
+#include <dirent.h>
 
-#define DEFAULT_FOLDER "sfd"
+#define DEFAULT_DIRECTORY "sfd"
+#define DEFAULT_SDF_FILENAME "datafile.sdf"
 
 #define OBFUSCATEA ((unsigned char) 97)
 #define OBFUSCATEB ((unsigned char) 11)
@@ -14,7 +16,19 @@ enum ErrCode
 {
 	EC_NONE,
 	EC_BADMAGIC,
-	EC_FOLDEREXISTS
+	EC_DIREXISTS,
+	EC_NODIR
+};
+
+struct IndexEntry
+{
+	unsigned int pos;
+	unsigned int size;
+	unsigned char path[32];
+	unsigned char name[16];
+	unsigned char ext[8];
+	unsigned char type;
+	struct IndexEntry *next;
 };
 
 const char sdf_extension[16][4] = {
@@ -61,14 +75,142 @@ void help(void)
 	printf(contents);
 }
 
+void write_big_endian(unsigned char dst[4], unsigned int n)
+{
+	dst[0] = (n >> 24) & 0xff;
+	dst[1] = (n >> 16) & 0xff;
+	dst[2] = (n >> 8) & 0xff;
+	dst[3] = (n >> 0) & 0xff;
+}
+
+unsigned char get_type_from_ext(char *ext)
+{
+	for (unsigned char i = 0; i < 16; ++i)
+	{
+		if (!strcmp(sdf_extension[i], ext))
+			return i;
+	}
+	return 0;	// 0 means unused file
+}
+
 int pack(void)
 {
+	DIR *dirp = opendir(DEFAULT_DIRECTORY);
+	if (NULL == dirp)
+	{
+		printf("Error: data directory not found.\n");
+		return EC_NODIR;
+	}
+
+	// count files
+	int filenum = 0;
+	struct IndexEntry *index = NULL;
+	struct IndexEntry **ientry = &index;
+	struct dirent *entry = NULL;
+	while (entry = readdir(dirp))
+	{
+		if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
+		{
+			*ientry = (struct IndexEntry *)malloc(sizeof(struct IndexEntry));
+			struct IndexEntry *curr = *ientry;
+			curr->next = NULL;
+			ientry = &curr->next;
+			sprintf(curr->path, "%s/%s", DEFAULT_DIRECTORY, entry->d_name);
+			sscanf(entry->d_name, "%[^.\r\n].%s", curr->name, curr->ext);
+			curr->type = get_type_from_ext(curr->ext);
+			if (0 == curr->type)
+				continue;
+
+			++filenum;
+		}
+	}
+	printf("%d files found.\n", filenum);
+	closedir(dirp);
+
+	FILE *output = NULL;
+	output = fopen("output.sdf", "wb");
+
+	// file header
+	fwrite("----------------", 1, 16, output);
+	fwrite("SOULFU DATA FILE", 1, 16, output);
+	int written = fprintf(output, "%d files", filenum);
+	fwrite("                ", 1, 16 - written, output);
+	fwrite("----------------", 1, 16, output);
+
+	// index
+	unsigned int pos = 0;
+	ientry = &index;
+	while (*ientry)
+	{
+		if (0 == (*ientry)->type)
+			continue;
+
+		FILE *input = fopen((*ientry)->path, "rb");
+		fseek(input, 0, SEEK_END);
+		(*ientry)->size = ftell(input);
+		fseek(input, 0, SEEK_SET);
+		fclose(input);
+
+		unsigned char buff[16];
+		write_big_endian(buff, pos);
+		(*ientry)->pos = pos;
+		pos += (*ientry)->size;
+		write_big_endian(buff + 4, (*ientry)->size);
+		buff[4] = (*ientry)->type;		// overwrite
+		strncpy(buff + 8, (*ientry)->name, 8);
+
+		buff[0] += OBFUSCATEA;
+		buff[1] += OBFUSCATEA;
+		buff[2] += OBFUSCATEA;
+		buff[3] += OBFUSCATEA;
+		buff[4] += OBFUSCATEB;
+		buff[5] += OBFUSCATEB;
+		buff[6] += OBFUSCATEB;
+		buff[7] += OBFUSCATEB;
+		buff[8] += OBFUSCATEC;
+		buff[9] += OBFUSCATEC;
+		buff[10] += OBFUSCATEC;
+		buff[11] += OBFUSCATEC;
+		buff[12] += OBFUSCATEC;
+		buff[13] += OBFUSCATEC;
+		buff[14] += OBFUSCATEC;
+		buff[15] += OBFUSCATEC;
+
+		fwrite(buff, 1, 16, output);
+
+		ientry = &((*ientry)->next);
+	}
+
+	// trailing ----
+	fwrite("----------------", 1, 16, output);
+
+	// save filedata
+	ientry = &index;
+	while (*ientry)
+	{
+		if (0 == (*ientry)->type)
+			continue;
+
+		FILE *input = fopen((*ientry)->path, "rb");
+		unsigned char data;
+		for (int i = 0; i < (*ientry)->size; ++i)
+		{
+			fread(&data, 1, 1, input);
+			data += OBFUSCATED;
+			fwrite(&data, 1, 1, output);
+		}
+		fclose(input);
+
+		ientry = &((*ientry)->next);
+	}
+
+	fclose(output);
 }
 
 int unpack(void)
 {
 	FILE *input = NULL;
-	input = fopen("datafile.sdf", "rb");
+	input = fopen(DEFAULT_SDF_FILENAME, "rb");
 
 	char magic[32];
 	fseek(input, 16, SEEK_SET);
@@ -90,14 +232,14 @@ int unpack(void)
 
 	int ret = 0;
 #ifdef __MINGW32__
-	ret = mkdir(DEFAULT_FOLDER);
+	ret = mkdir(DEFAULT_DIRECTORY);
 #else
-	ret = mkdir(DEFAULT_FOLDER, 0644);
+	ret = mkdir(DEFAULT_DIRECTORY, 0644);
 #endif
 	if (0 != ret)
 	{
 		printf("Error: output folder exists.\n");
-		return EC_FOLDEREXISTS;
+		return EC_DIREXISTS;
 	}
 
 	int index_entry_pos = 64;
@@ -134,7 +276,7 @@ int unpack(void)
 
 		// save the file
 		unsigned char filepath[32];
-		sprintf(filepath, "%s/%s", DEFAULT_FOLDER, filename);
+		sprintf(filepath, "%s/%s", DEFAULT_DIRECTORY, filename);
 		FILE *output = NULL;
 		output = fopen(filepath, "wb");
 
