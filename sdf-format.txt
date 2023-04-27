@@ -1,0 +1,23 @@
+File Header:
+16 byte string            - "----------------"
+16 byte string            - "SOULFU DATA FILE"
+16 byte string            - "25 files        " (number of files can vary)
+16 byte string            - "----------------"
+File Header is unobfuscated.
+
+Index:
+For each file...
+  4 byte position         - "0123............" (offset starting after the trailing ----)
+  1 byte flags/file type  - "....4..........."
+  3 byte file size        - ".....567........"
+  8 byte filename        - ".........SANDTROL"
+Index is obfuscated.
+
+16 byte string            - "----------------"
+Unobfuscated.
+
+For each file data...
+  "size" bytes of data
+Obfuscated.
+
+Refer to the source code for details.
