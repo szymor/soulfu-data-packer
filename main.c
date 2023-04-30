@@ -6,6 +6,9 @@
 #include <sys/types.h>
 #include <dirent.h>
 
+#define PATH_LEN			(256)
+#define FILENAME_LEN		(32)
+#define EXTENSION_LEN		(8)
 #define DEFAULT_SDF_DIR		"sfd"
 #define DEFAULT_SDF_PATH	"datafile.sdf"
 
@@ -58,9 +61,9 @@ struct IndexEntry
 {
 	unsigned int pos;
 	unsigned int size;
-	unsigned char path[32];
-	unsigned char name[16];
-	unsigned char ext[8];
+	unsigned char path[PATH_LEN];
+	unsigned char name[FILENAME_LEN];
+	unsigned char ext[EXTENSION_LEN];
 	unsigned char type;
 	struct IndexEntry *next;
 };
@@ -72,8 +75,8 @@ const char sdf_extension[EXT_END][4] = {
 	"LAN", "DDD", "RDY", "TIL"
 };
 
-char output_path[32] = "";
-char input_path[32] = "";
+char output_path[PATH_LEN] = "";
+char input_path[PATH_LEN] = "";
 enum Action action = A_NONE;
 bool flag_convert_eol = false;
 
@@ -394,7 +397,7 @@ int unpack(void)
 		//printf("%s\n", filename);
 
 		// save the file
-		unsigned char filepath[32];
+		unsigned char filepath[PATH_LEN];
 		sprintf(filepath, "%s/%s", output_path, filename);
 		FILE *output = NULL;
 		output = fopen(filepath, "wb");
