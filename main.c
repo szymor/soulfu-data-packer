@@ -252,7 +252,11 @@ int pack(void)
 	while (*ientry)
 	{
 		if (0 == (*ientry)->type)
+		{
+			ientry = &((*ientry)->next);
 			continue;
+		}
+		printf("%s\n", (*ientry)->path);
 
 		FILE *input = fopen((*ientry)->path, "rb");
 		fseek(input, 0, SEEK_END);
@@ -298,7 +302,11 @@ int pack(void)
 	while (*ientry)
 	{
 		if (0 == (*ientry)->type)
+		{
+			ientry = &((*ientry)->next);
 			continue;
+		}
+		printf("%s\n", (*ientry)->path);
 
 		FILE *input = fopen((*ientry)->path, "rb");
 		unsigned char data;
